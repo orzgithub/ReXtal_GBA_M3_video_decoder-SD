@@ -8,6 +8,10 @@ endif
 
 include $(DEVKITARM)/gba_rules
 
+ifeq ($(strip $(CART_TARGET)),)
+$(error "Please set CART_TARGET in your environment. Can be one of: ez scsd sclite schis")
+endif
+
 #---------------------------------------------------------------------------------
 # TARGET is the name of the output
 # BUILD is the directory where object files & intermediate files will be placed
@@ -20,9 +24,9 @@ include $(DEVKITARM)/gba_rules
 # the makefile is found
 #
 #---------------------------------------------------------------------------------
-TARGET		:= M3_Movie_Player
+TARGET		:= M3_Movie_Player_$(CART_TARGET)
 BUILD		:= build
-SOURCES		:= source gbfs
+SOURCES		:= source
 INCLUDES	:= include
 DATA		:=
 MUSIC		:=
@@ -32,11 +36,40 @@ MUSIC		:=
 #---------------------------------------------------------------------------------
 ARCH	:=	-mthumb -mthumb-interwork
 
-CFLAGS	:=	-g -Wall -O2\
+CFLAGS	:=	-g -Wall -Os -flto\
 		-mcpu=arm7tdmi -mtune=arm7tdmi\
 		$(ARCH)
 
 CFLAGS	+=	$(INCLUDE)
+
+ifeq ($(EWRAM_AS_PRAM), 1)
+	CFLAGS += -DEWRAM_AS_PRAM=1
+endif
+
+# Cart specific flags and sources
+ifeq ($(CART_TARGET), ez)
+	SOURCES += cart_implement/ez cart_implement/ez/fatfs
+	INCLUDES += cart_implement/ez/include
+Ezcard_OP.o: CFLAGS += -fno-lto
+else ifeq ($(CART_TARGET), scsd)
+	SOURCES += cart_implement/sc cart_implement/sc/fatfs
+	INCLUDES += cart_implement/sc/include
+	CFLAGS += -DSD_PREERASE_BLOCKS_WRITE -DSC_FAST_ROM_MIRROR=use_fast_mirror\(\)
+else ifeq ($(CART_TARGET), sclite)
+	SOURCES += cart_implement/sc cart_implement/sc/fatfs
+	INCLUDES += cart_implement/sc/include
+	CFLAGS += -DSD_PREERASE_BLOCKS_WRITE -DSC_FAST_ROM_MIRROR=false -DSUPERCARD_LITE_IO
+else ifeq ($(CART_TARGET), schis)
+	SOURCES += cart_implement/sc cart_implement/sc/fatfs
+	INCLUDES += cart_implement/sc/include
+	CFLAGS += -DSD_PREERASE_BLOCKS_WRITE -DSC_FAST_ROM_MIRROR=use_fast_mirror\(\) -DSUPERCHIS_IO
+else ifeq ($(CART_TARGET), dldi)
+	SOURCES += cart_implement/dldi cart_implement/dldi/fatfs
+	INCLUDES += cart_implement/dldi/include
+	CFLAGS += -DEWRAM_AS_PRAM=1
+else
+    $(error "CART_TARGET $(CART_TARGET) is not supported.")
+endif
 
 CXXFLAGS	:=	$(CFLAGS) -fno-rtti -fno-exceptions
 

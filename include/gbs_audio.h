@@ -36,9 +36,9 @@ typedef struct {
 } GbsAudioInfo;
 
 /*
- * Initialize the GBS audio system with embedded data.
+ * Initialize the GBS audio system with a pointer to the file in memory.
  *
- * @param gbs_data    Pointer to GBS file data (typically from bin2o)
+ * @param gbs_data    Pointer to GBS file data (e.g. from PSRAM)
  * @param gbs_size    Size of GBS data in bytes
  * @return            true if initialization successful
  */
@@ -126,4 +126,10 @@ uint32_t gbs_audio_get_total_minutes(void);
  */
 int32_t gbs_audio_check_minute_sync(void);
 
+
+/*
+ * Set callback to move the data window and the pointer.
+ */
+void gbs_audio_set_window_callback(bool (*callback)(uint32_t offset, uint32_t length));
+void gbs_audio_set_get_ptr_callback(const uint8_t* (*callback)(uint32_t offset, uint32_t length));
 #endif // GBS_AUDIO_H

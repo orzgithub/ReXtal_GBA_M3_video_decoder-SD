@@ -1,10 +1,8 @@
 /*
  * Media Source Abstraction Layer
  *
- * Provides a unified interface for loading media data from different sources:
- * - GBFS (appended to ROM)
- * - Embedded data (compiled into ROM)
- * - SD card (future)
+ * Provides a unified interface for loading media data from SD card via FatFS,
+ * using a large sliding window in PSRAM.
  *
  * Supports both GBS (audio) and GBM (video) files.
  */
@@ -15,76 +13,132 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// Media source types
+#include "cart_interface.h"
+
+#if EWRAM_AS_PRAM
+    #include "ewram_pram.h"
+#endif
+
+#define PRAM_BASE         0x08000000
+#define PRAM_SIZE         0x02000000
+
+// Reserved area: 4 MB for the player itself
+#define PRAM_RESERVED     (4 * 1024 * 1024)     
+
+#ifndef VIDEO_WINDOW_SIZE
+    #if EWRAM_AS_PRAM
+        #define VIDEO_WINDOW_SIZE (32 * 1024)
+    #else
+        // Video window: 16 MB (located right after the reserved area)
+        #define VIDEO_WINDOW_SIZE (16 * 1024 * 1024)
+    #endif
+#endif
+#if EWRAM_AS_PRAM
+    #define VIDEO_WINDOW_BASE  video_window
+#else
+    #define VIDEO_WINDOW_BASE  ((uint8_t*)PRAM_BASE + PRAM_RESERVED)
+#endif
+
+#ifndef AUDIO_WINDOW_SIZE
+    #if EWRAM_AS_PRAM
+        #define AUDIO_WINDOW_SIZE  (32 * 1024)
+    #else
+        // Audio window: 12 MB (immediately after video window)
+        #define AUDIO_WINDOW_SIZE  (12 * 1024 * 1024)
+    #endif
+#endif
+#if EWRAM_AS_PRAM
+    #define AUDIO_WINDOW_BASE   audio_window
+#else
+    #define AUDIO_WINDOW_BASE   ((uint8_t*)PRAM_BASE + (PRAM_RESERVED + VIDEO_WINDOW_SIZE))
+#endif
+
+// Transfer chunk size (fits comfortably in EWRAM)
+#define TRANSFER_CHUNK    (32 * 1024)
+
+// Media source types (kept for compatibility)
 typedef enum {
     MEDIA_SOURCE_NONE = 0,
-    MEDIA_SOURCE_EMBEDDED,  // Compiled into ROM via bin2o
-    MEDIA_SOURCE_GBFS,      // GBFS filesystem appended to ROM
-    MEDIA_SOURCE_SDCARD     // SD card (future)
+    MEDIA_SOURCE_EMBEDDED,
+    MEDIA_SOURCE_GBFS,
+    MEDIA_SOURCE_SDCARD
 } MediaSourceType;
 
-// Media file types
+// Media file types (kept for compatibility)
 typedef enum {
     MEDIA_TYPE_UNKNOWN = 0,
-    MEDIA_TYPE_GBS,         // Audio file
-    MEDIA_TYPE_GBM          // Video file
+    MEDIA_TYPE_GBS,
+    MEDIA_TYPE_GBM
 } MediaFileType;
 
-// Media source info
+// Media source info (kept for compatibility)
 typedef struct {
     MediaSourceType source;
     MediaFileType type;
-    const uint8_t* data;    // Pointer to media data (NULL if not loaded)
-    uint32_t size;          // Size of media data
-    char filename[32];      // Filename (for GBFS/SD)
+    const uint8_t* data;
+    uint32_t size;
+    char filename[32];
 } MediaSourceInfo;
 
 /*
- * Initialize the media source system.
- * Call this once at startup.
- *
- * @return true if initialization successful
+ * Streaming file handle backed by a sliding window in PSRAM.
+ */
+typedef struct {
+    FIL      file;               // FatFS file handle
+    uint32_t file_size;
+    uint32_t pos;                // current logical read position
+
+    uint8_t* window_base;        // PSRAM address of the window
+    uint32_t window_size;        // size of the window
+    uint32_t window_offset;      // file offset corresponding to window_base
+    bool     window_valid;       // true if the window contains valid data
+
+    bool     full_loaded;        // true if the entire file fits in the window
+    uint8_t* full_cache;         // if full_loaded, points to the base of the data
+} MediaStream;
+
+/*
+ * Initialize the media source subsystem.
+ * Mounts the SD card and prepares the PSRAM transfer buffer.
+ * Returns true on success.
  */
 bool media_source_init(void);
 
 /*
- * Find and load the first available GBS audio file.
- * Searches in order: GBFS, then embedded data.
- *
- * @param info  Output: filled with source information
- * @return      true if audio found
+ * Open a media file and associate it with a PSRAM sliding window.
+ * If the file fits inside the window, it is loaded completely.
+ * Otherwise the window will be loaded on demand.
  */
-bool media_source_find_gbs(MediaSourceInfo* info);
+bool media_stream_open(MediaStream* stream, const char* filename,
+                       uint8_t* window_base, uint32_t window_size);
 
 /*
- * Find and load the first available GBM video file.
- * Searches in order: GBFS, then embedded data.
- *
- * @param info  Output: filled with source information
- * @return      true if video found
+ * Read data from the stream into a buffer.
+ * Returns the number of bytes actually read.
  */
-bool media_source_find_gbm(MediaSourceInfo* info);
+uint32_t media_stream_read(MediaStream* stream, void* buf, uint32_t len);
 
 /*
- * Load a specific file by name (GBFS/SD only).
- *
- * @param filename  Name of the file to load
- * @param info      Output: filled with source information
- * @return          true if file found
+ * Ensure that [offset, offset+len) is present in the window and return
+ * a pointer to the data inside PSRAM.
+ * Returns NULL on failure.
  */
-bool media_source_load_file(const char* filename, MediaSourceInfo* info);
+const uint8_t* media_stream_get_ptr(MediaStream* stream,
+                                    uint32_t offset, uint32_t len);
 
 /*
- * Get the number of media files available (GBFS/SD).
- *
- * @param type  File type to count (MEDIA_TYPE_GBS or MEDIA_TYPE_GBM)
- * @return      Number of files, 0 if using embedded data
+ * Set the logical read position without loading data.
  */
-uint32_t media_source_count(MediaFileType type);
+bool media_stream_seek(MediaStream* stream, uint32_t pos);
 
 /*
- * Get the currently active source type.
+ * Close the stream and release resources.
  */
-MediaSourceType media_source_get_type(void);
+void media_stream_close(MediaStream* stream);
+
+/*
+ * Return the total size of the file.
+ */
+u32 media_stream_size(const MediaStream* stream);
 
 #endif // MEDIA_SOURCE_H

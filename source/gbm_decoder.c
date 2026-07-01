@@ -11,8 +11,10 @@ void gbm_set_version(u8 version) {
         xor_key = 0xD6AC;
     } else if (version == GBM_VERSION_V130) {
         xor_key = 0x0000;  // No encryption
-    } else {
+    } else if (version == GBM_VERSION_GEN1) {
         xor_key = 0xD669;  // Gen1 default
+    } else {
+        xor_key = 0x0000;
     }
 }
 
@@ -63,6 +65,8 @@ static inline u32 read_u32_unaligned(const u8 *ptr) {
 static inline u16 read_u16_unaligned(const u8 *ptr) {
     return ptr[0] | (ptr[1] << 8);
 }
+
+#define IWRAM_CODE __attribute__((section(".iwram"), long_call))
 
 // Critical Path: next_bit
 // Placing in IWRAM
@@ -227,12 +231,12 @@ static IWRAM_CODE void decode_block_8x1(DecodeContext *ctx);
 static IWRAM_CODE void decode_block_1x4(DecodeContext *ctx);
 static IWRAM_CODE void decode_block_2x2(DecodeContext *ctx);
 static IWRAM_CODE void decode_block_4x1(DecodeContext *ctx);
-static IWRAM_CODE void decode_block_1x2(DecodeContext *ctx);
-static IWRAM_CODE void decode_block_2x1(DecodeContext *ctx);
+static inline void decode_block_1x2(DecodeContext *ctx);
+static inline void decode_block_2x1(DecodeContext *ctx);
 
 
 // Functions
-static IWRAM_CODE void decode_block_8x8(DecodeContext *ctx) {
+static inline void decode_block_8x8(DecodeContext *ctx) {
     switch (next_2bits(ctx)) {
     case 0: // 00: copy from same position
         // copy_u32_block(ctx, ctx->block_offset, ctx->block_offset, 8, 4); // no-op: VRAM==BUF
@@ -696,7 +700,7 @@ static IWRAM_CODE void decode_block_4x1(DecodeContext *ctx) {
     }
 }
 
-static IWRAM_CODE void decode_block_1x2(DecodeContext *ctx) {
+static inline void decode_block_1x2(DecodeContext *ctx) {
     switch (next_2bits(ctx)) {
     case 0: // 00: copy from same position
         // copy_u16_block(ctx, ctx->block_offset, ctx->block_offset, 2, 1); // no-op: VRAM==BUF
@@ -732,7 +736,7 @@ static IWRAM_CODE void decode_block_1x2(DecodeContext *ctx) {
     }
 }
 
-static IWRAM_CODE void decode_block_2x1(DecodeContext *ctx) {
+static inline void decode_block_2x1(DecodeContext *ctx) {
     switch (next_2bits(ctx)) {
     case 0: // 00: copy from same position
         // copy_u32_block(ctx, ctx->block_offset, ctx->block_offset, 1, 1); // no-op: VRAM==BUF
@@ -770,6 +774,14 @@ static IWRAM_CODE void decode_block_2x1(DecodeContext *ctx) {
     }
 }
 
+// Pre-calculated row offset table (each block row = 8 * ROW_BYTES = 0xF00)
+__attribute__((section(".rodata"))) static const int ROW_OFFSETS[20] = {
+    0 * 8 * ROW_BYTES, 1 * 8 * ROW_BYTES, 2 * 8 * ROW_BYTES, 3 * 8 * ROW_BYTES, 4 * 8 * ROW_BYTES,
+    5 * 8 * ROW_BYTES, 6 * 8 * ROW_BYTES, 7 * 8 * ROW_BYTES, 8 * 8 * ROW_BYTES, 9 * 8 * ROW_BYTES,
+    10 * 8 * ROW_BYTES, 11 * 8 * ROW_BYTES, 12 * 8 * ROW_BYTES, 13 * 8 * ROW_BYTES, 14 * 8 * ROW_BYTES,
+    15 * 8 * ROW_BYTES, 16 * 8 * ROW_BYTES, 17 * 8 * ROW_BYTES, 18 * 8 * ROW_BYTES, 19 * 8 * ROW_BYTES,
+};
+
 // Also put the main decoder loop in IWRAM for good measure?
 // It calls many IWRAM functions, so it's less critical, but looping overhead is reduced.
 u32 IWRAM_CODE gbm_decode_frame(const u8 *data, u32 offset, u16 *dst, const u16 *ref) {
@@ -783,26 +795,26 @@ u32 IWRAM_CODE gbm_decode_frame(const u8 *data, u32 offset, u16 *dst, const u16 
 
     DecodeContext ctx;
     ctx.state = 0x80000000; // Initial state
-    
+
     u32 flag_start = offset + 6;
     u32 flag_end = flag_start + flag_bytes;
     u32 pal_start = flag_end;
     u32 pal_end = pal_start + palette_bytes;
-    
+
     ctx.flag_ptr = data + flag_start;
     ctx.flag_end = data + flag_end;
     ctx.palette_ptr = data + pal_start;
     ctx.palette_end = data + pal_end;
     ctx.payload_ptr = data + pal_end;
     ctx.payload_end = data + next_offset;
-    
+
     ctx.dst = dst;
     // If ref is null, use dst (intra prediction behavior)
     ctx.ref = ref ? ref : dst;
 
     // Decode loop
     for (int y_block = 0; y_block < 20; y_block++) {
-        ctx.row_offset = y_block * 8 * ROW_BYTES;
+        ctx.row_offset = ROW_OFFSETS[y_block];
         ctx.block_offset = ctx.row_offset;
         for (int x_block = 0; x_block < 30; x_block++) {
             ctx.block_offset = ctx.row_offset + x_block * 8 * 2; // 2 bytes per pixel
