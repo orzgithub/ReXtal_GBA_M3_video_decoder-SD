@@ -134,8 +134,10 @@ static void show_playback_info(void) {
     
     if (pb.has_video) {
         snprintf(line1, 64, "Video: Yes (%lu KB)", (unsigned long)(pb.video_size / 1024));
+        snprintf(line3, 64, "B:Exit A:Pause L/R:Seek");
     } else {
         snprintf(line1, 64, "Video: Not found");
+        snprintf(line3, 64, "B:Exit A:Pause");
     }
 
     if (pb.has_audio) {
@@ -145,8 +147,6 @@ static void show_playback_info(void) {
     } else {
         snprintf(line2, 64, "Audio: Not found");
     }
-
-    snprintf(line3, 64, "B:Exit A:Pause L/R:Seek");
     snprintf(line4, 64, "START:Restart");
 
     // Clear text area with dark background
