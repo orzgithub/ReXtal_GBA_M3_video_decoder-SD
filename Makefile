@@ -42,6 +42,11 @@ CFLAGS	:=	-g -Wall -Os -flto\
 
 CFLAGS	+=	$(INCLUDE)
 
+CXXFLAGS	:=	$(CFLAGS) -fno-rtti -fno-exceptions
+
+ASFLAGS	:=	-g $(ARCH)
+LDFLAGS	=	-g $(ARCH) -Wl,-Map,$(notdir $*.map)
+
 ifeq ($(EWRAM_AS_PRAM), 1)
 	CFLAGS += -DEWRAM_AS_PRAM=1
 endif
@@ -67,14 +72,13 @@ else ifeq ($(CART_TARGET), dldi)
 	SOURCES += cart_implement/dldi cart_implement/dldi/fatfs
 	INCLUDES += cart_implement/dldi/include
 	CFLAGS += -DEWRAM_AS_PRAM=1
+else ifeq ($(CART_TARGET), image)
+	SOURCES += cart_implement/image cart_implement/image/fatfs
+	INCLUDES += cart_implement/image/include
+	CFLAGS += -DEWRAM_AS_PRAM=1
 else
     $(error "CART_TARGET $(CART_TARGET) is not supported.")
 endif
-
-CXXFLAGS	:=	$(CFLAGS) -fno-rtti -fno-exceptions
-
-ASFLAGS	:=	-g $(ARCH)
-LDFLAGS	=	-g $(ARCH) -Wl,-Map,$(notdir $*.map)
 
 #---------------------------------------------------------------------------------
 # any extra libraries we wish to link with the project
