@@ -1,6 +1,9 @@
 #include "gbm_decoder.h"
 #include <string.h>
 
+#pragma GCC push_options
+#pragma GCC optimize("O2")
+
 #define ROW_BYTES (FRAME_WIDTH * 2)
 
 // XOR key for decoding flag_bytes (default to Gen1)
@@ -703,28 +706,32 @@ static IWRAM_CODE void decode_block_4x1(DecodeContext *ctx) {
 static inline void decode_block_1x2(DecodeContext *ctx) {
     switch (next_2bits(ctx)) {
     case 0: // 00: copy from same position
-        // copy_u16_block(ctx, ctx->block_offset, ctx->block_offset, 2, 1); // no-op: VRAM==BUF
         ctx->block_offset += 2;
         break;
     case 1: // 01: copy with codebook offset
         {
             u8 code = read_code(ctx);
-            copy_u16_block(ctx, ctx->block_offset, ctx->block_offset + CODEBOOK_OFFSETS[code], 2, 1);
+            int src_off = ctx->block_offset + CODEBOOK_OFFSETS[code];
+            ctx->dst[ctx->block_offset >> 1] = ctx->ref[src_off >> 1];
+            ctx->dst[(ctx->block_offset + ROW_BYTES) >> 1] = ctx->ref[(src_off + ROW_BYTES) >> 1];
+            ctx->block_offset += 2;
         }
-        ctx->block_offset += 2;
         break;
     case 2: // 10: delta
         {
             u8 code = read_code(ctx);
             s16 color = to_signed16(read_palette_color(ctx));
-            delta_u16_block(ctx, ctx->block_offset, ctx->block_offset + CODEBOOK_OFFSETS[code], 2, 1, color);
+            int src_off = ctx->block_offset + CODEBOOK_OFFSETS[code];
+            ctx->dst[ctx->block_offset >> 1] = ctx->ref[src_off >> 1] + color;
+            ctx->dst[(ctx->block_offset + ROW_BYTES) >> 1] = ctx->ref[(src_off + ROW_BYTES) >> 1] + color;
+            ctx->block_offset += 2;
         }
-        ctx->block_offset += 2;
         break;
     case 3: // 11: fill (same or two colors)
         if (next_bit(ctx) == 0) {
             u16 color0 = read_palette_color(ctx);
-            fill_u16_block(ctx, ctx->block_offset, 2, 1, color0);
+            ctx->dst[ctx->block_offset >> 1] = color0;
+            ctx->dst[(ctx->block_offset + ROW_BYTES) >> 1] = color0;
         } else {
             u16 color0 = read_palette_color(ctx);
             u16 color1 = read_palette_color(ctx);
@@ -739,35 +746,37 @@ static inline void decode_block_1x2(DecodeContext *ctx) {
 static inline void decode_block_2x1(DecodeContext *ctx) {
     switch (next_2bits(ctx)) {
     case 0: // 00: copy from same position
-        // copy_u32_block(ctx, ctx->block_offset, ctx->block_offset, 1, 1); // no-op: VRAM==BUF
         ctx->block_offset += 4;
         break;
     case 1: // 01: copy with codebook offset
         {
             u8 code = read_code(ctx);
-            copy_u32_block(ctx, ctx->block_offset, ctx->block_offset + CODEBOOK_OFFSETS[code], 1, 1);
+            int src_off = ctx->block_offset + CODEBOOK_OFFSETS[code];
+            ctx->dst[ctx->block_offset >> 1]       = ctx->ref[src_off >> 1];
+            ctx->dst[(ctx->block_offset >> 1) + 1]  = ctx->ref[(src_off >> 1) + 1];
+            ctx->block_offset += 4;
         }
-        ctx->block_offset += 4;
         break;
     case 2: // 10: delta
         {
             u8 code = read_code(ctx);
             s16 color = to_signed16(read_palette_color(ctx));
-            delta_u32_block(ctx, ctx->block_offset, ctx->block_offset + CODEBOOK_OFFSETS[code], 1, 1, color);
+            int src_off = ctx->block_offset + CODEBOOK_OFFSETS[code];
+            ctx->dst[ctx->block_offset >> 1]       = ctx->ref[src_off >> 1] + color;
+            ctx->dst[(ctx->block_offset >> 1) + 1]  = ctx->ref[(src_off >> 1) + 1] + color;
+            ctx->block_offset += 4;
         }
-        ctx->block_offset += 4;
         break;
     case 3: // 11: fill (same or two colors)
         if (next_bit(ctx) == 0) {
             u16 color0 = read_palette_color(ctx);
-            // Fill 2 pixels width with same color
-            ctx->dst[ctx->block_offset >> 1] = color0;
-            ctx->dst[(ctx->block_offset >> 1) + 1] = color0;
+            ctx->dst[ctx->block_offset >> 1]       = color0;
+            ctx->dst[(ctx->block_offset >> 1) + 1]  = color0;
         } else {
             u16 color0 = read_palette_color(ctx);
             u16 color1 = read_palette_color(ctx);
-            ctx->dst[ctx->block_offset >> 1] = color0;
-            ctx->dst[(ctx->block_offset >> 1) + 1] = color1;
+            ctx->dst[ctx->block_offset >> 1]       = color0;
+            ctx->dst[(ctx->block_offset >> 1) + 1]  = color1;
         }
         ctx->block_offset += 4;
         break;
@@ -824,3 +833,5 @@ u32 IWRAM_CODE gbm_decode_frame(const u8 *data, u32 offset, u16 *dst, const u16 
 
     return next_offset;
 }
+
+#pragma GCC pop_options

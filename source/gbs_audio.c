@@ -16,6 +16,9 @@
 #include <gba_timers.h>
 #include <string.h>
 
+#pragma GCC push_options
+#pragma GCC optimize("O2")
+
 // IWRAM placement for performance-critical code
 #define IWRAM_CODE __attribute__((section(".iwram"), long_call))
 
@@ -1106,3 +1109,5 @@ int32_t gbs_audio_check_minute_sync(void) {
     if (minute >= 0) state.sync_minute = -1;
     return minute;
 }
+
+#pragma GCC pop_options
