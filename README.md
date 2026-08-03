@@ -17,6 +17,7 @@ This SD-enabled version has been tested and confirmed working on:
 - **SuperChis**
 
 Additionally, a **DLDI‑compatible build** is provided, which should work with many other flash carts that support DLDI patching. However, **not all DLDI implementations are compatible** – your mileage may vary.
+And for other carts and emulator an image based build is alivable. Although for these usage this version is not the best choice.
 
 ---
 
