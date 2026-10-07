@@ -59,21 +59,29 @@ __attribute__((section(".iwram.rodata"))) static const s16 CODEBOOK_OFFSETS[] = 
 };
 
 // Inline helpers
-static inline u32 read_u32_unaligned(const u8 *ptr) {
-    // GBA supports unaligned loads? NO. ARM7TDMI does NOT support unaligned loads correctly (it rotates).
-    // We must construct it.
-    return ptr[0] | (ptr[1] << 8) | (ptr[2] << 16) | (ptr[3] << 24);
+GBM_ALWAYS_INLINE u32 read_u32_unaligned(const u8 *ptr) {
+    // ARM7TDMI has no unaligned load: LDR/LDRH from an odd address rotates
+    // instead of faulting, so pointer parity is handled in software.
+    if ((unsigned long)ptr & 1u) {
+        return (u32)ptr[0] | ((u32)ptr[1] << 8) | ((u32)ptr[2] << 16) |
+               ((u32)ptr[3] << 24);
+    }
+    {
+        const u16 *p = (const u16 *)ptr;
+        return (u32)p[0] | ((u32)p[1] << 16);
+    }
 }
 
-static inline u16 read_u16_unaligned(const u8 *ptr) {
-    return ptr[0] | (ptr[1] << 8);
+GBM_ALWAYS_INLINE u16 read_u16_unaligned(const u8 *ptr) {
+    if ((unsigned long)ptr & 1u) {
+        return (u16)((u32)ptr[0] | ((u32)ptr[1] << 8));
+    }
+    return *(const u16 *)ptr;
 }
-
-#define IWRAM_CODE __attribute__((section(".iwram"), long_call))
 
 // Critical Path: next_bit
-// Placing in IWRAM
-static IWRAM_CODE int next_bit(DecodeContext *ctx) {
+// Inlined into every block decoder (see GBM_ALWAYS_INLINE).
+GBM_ALWAYS_INLINE int next_bit(DecodeContext *ctx) {
     if (ctx->state == (1u << 31)) {
         u32 word = read_u32_unaligned(ctx->flag_ptr);
         ctx->flag_ptr += 4;
@@ -87,7 +95,7 @@ static IWRAM_CODE int next_bit(DecodeContext *ctx) {
 }
 
 // Read 2 bits at once - optimized for common decode patterns
-static IWRAM_CODE int next_2bits(DecodeContext *ctx) {
+GBM_ALWAYS_INLINE int next_2bits(DecodeContext *ctx) {
     u32 state = ctx->state;
 
     // Fast path: sentinel is in low 30 bits, we have at least 2 data bits
@@ -117,17 +125,17 @@ static IWRAM_CODE int next_2bits(DecodeContext *ctx) {
     return bits;
 }
 
-static inline u16 read_palette_color(DecodeContext *ctx) {
+GBM_ALWAYS_INLINE u16 read_palette_color(DecodeContext *ctx) {
     u16 color = read_u16_unaligned(ctx->palette_ptr);
     ctx->palette_ptr += 2;
     return color;
 }
 
-static inline s16 to_signed16(u16 val) {
+GBM_ALWAYS_INLINE s16 to_signed16(u16 val) {
     return (s16)val;
 }
 
-static inline u8 read_code(DecodeContext *ctx) {
+GBM_ALWAYS_INLINE u8 read_code(DecodeContext *ctx) {
     u8 code = *ctx->payload_ptr;
     ctx->payload_ptr++;
     return code;
@@ -139,7 +147,7 @@ static inline u8 read_code(DecodeContext *ctx) {
 // Use pointer increment instead of recalculating offset each row
 #define ROW_STRIDE (ROW_BYTES >> 1)  // stride in u16 units (240)
 
-static IWRAM_CODE void copy_u32_block(DecodeContext *ctx, int dst_off, int ref_off, int rows, int words) {
+static GBM_HOT_CODE void copy_u32_block(DecodeContext *ctx, int dst_off, int ref_off, int rows, int words) {
     u32 *d = (u32*)(ctx->dst + (dst_off >> 1));
     const u16 *s = ctx->ref + (ref_off >> 1);
 
@@ -156,7 +164,7 @@ static IWRAM_CODE void copy_u32_block(DecodeContext *ctx, int dst_off, int ref_o
     }
 }
 
-static IWRAM_CODE void fill_u32_block(DecodeContext *ctx, int dst_off, int rows, int words, u16 color) {
+static GBM_HOT_CODE void fill_u32_block(DecodeContext *ctx, int dst_off, int rows, int words, u16 color) {
     u32 color32 = color | ((u32)color << 16);
     u32 *d = (u32*)(ctx->dst + (dst_off >> 1));
     for (int r = 0; r < rows; r++) {
@@ -167,7 +175,7 @@ static IWRAM_CODE void fill_u32_block(DecodeContext *ctx, int dst_off, int rows,
     }
 }
 
-static IWRAM_CODE void delta_u32_block(DecodeContext *ctx, int dst_off, int ref_off, int rows, int words, s16 delta) {
+static GBM_HOT_CODE void delta_u32_block(DecodeContext *ctx, int dst_off, int ref_off, int rows, int words, s16 delta) {
     u32 *d = (u32*)(ctx->dst + (dst_off >> 1));
     const u16 *s = ctx->ref + (ref_off >> 1);
     // RGB555: bit15 is unused, can absorb carry from lower pixel
@@ -187,7 +195,7 @@ static IWRAM_CODE void delta_u32_block(DecodeContext *ctx, int dst_off, int ref_
     }
 }
 
-static IWRAM_CODE void copy_u16_block(DecodeContext *ctx, int dst_off, int ref_off, int rows, int halfwords) {
+static GBM_HOT_CODE void copy_u16_block(DecodeContext *ctx, int dst_off, int ref_off, int rows, int halfwords) {
     u16 *d = ctx->dst + (dst_off >> 1);
     const u16 *s = ctx->ref + (ref_off >> 1);
     for (int r = 0; r < rows; r++) {
@@ -199,7 +207,7 @@ static IWRAM_CODE void copy_u16_block(DecodeContext *ctx, int dst_off, int ref_o
     }
 }
 
-static IWRAM_CODE void fill_u16_block(DecodeContext *ctx, int dst_off, int rows, int halfwords, u16 color) {
+static GBM_HOT_CODE void fill_u16_block(DecodeContext *ctx, int dst_off, int rows, int halfwords, u16 color) {
     u16 *d = ctx->dst + (dst_off >> 1);
     for (int r = 0; r < rows; r++) {
         for (int i = 0; i < halfwords; i++) {
@@ -209,7 +217,7 @@ static IWRAM_CODE void fill_u16_block(DecodeContext *ctx, int dst_off, int rows,
     }
 }
 
-static IWRAM_CODE void delta_u16_block(DecodeContext *ctx, int dst_off, int ref_off, int rows, int halfwords, s16 delta) {
+static GBM_HOT_CODE void delta_u16_block(DecodeContext *ctx, int dst_off, int ref_off, int rows, int halfwords, s16 delta) {
     u16 *d = ctx->dst + (dst_off >> 1);
     const u16 *s = ctx->ref + (ref_off >> 1);
     for (int r = 0; r < rows; r++) {
@@ -234,12 +242,12 @@ static IWRAM_CODE void decode_block_8x1(DecodeContext *ctx);
 static IWRAM_CODE void decode_block_1x4(DecodeContext *ctx);
 static IWRAM_CODE void decode_block_2x2(DecodeContext *ctx);
 static IWRAM_CODE void decode_block_4x1(DecodeContext *ctx);
-static inline void decode_block_1x2(DecodeContext *ctx);
-static inline void decode_block_2x1(DecodeContext *ctx);
+static GBM_HOT_CODE void decode_block_1x2(DecodeContext *ctx);
+static GBM_HOT_CODE void decode_block_2x1(DecodeContext *ctx);
 
 
 // Functions
-static inline void decode_block_8x8(DecodeContext *ctx) {
+static GBM_HOT_CODE void decode_block_8x8(DecodeContext *ctx) {
     switch (next_2bits(ctx)) {
     case 0: // 00: copy from same position
         // copy_u32_block(ctx, ctx->block_offset, ctx->block_offset, 8, 4); // no-op: VRAM==BUF
@@ -703,7 +711,7 @@ static IWRAM_CODE void decode_block_4x1(DecodeContext *ctx) {
     }
 }
 
-static inline void decode_block_1x2(DecodeContext *ctx) {
+static GBM_HOT_CODE void decode_block_1x2(DecodeContext *ctx) {
     switch (next_2bits(ctx)) {
     case 0: // 00: copy from same position
         ctx->block_offset += 2;
@@ -743,7 +751,7 @@ static inline void decode_block_1x2(DecodeContext *ctx) {
     }
 }
 
-static inline void decode_block_2x1(DecodeContext *ctx) {
+static GBM_HOT_CODE void decode_block_2x1(DecodeContext *ctx) {
     switch (next_2bits(ctx)) {
     case 0: // 00: copy from same position
         ctx->block_offset += 4;
@@ -793,7 +801,7 @@ __attribute__((section(".rodata"))) static const int ROW_OFFSETS[20] = {
 
 // Also put the main decoder loop in IWRAM for good measure?
 // It calls many IWRAM functions, so it's less critical, but looping overhead is reduced.
-u32 IWRAM_CODE gbm_decode_frame(const u8 *data, u32 offset, u16 *dst, const u16 *ref) {
+u32 GBM_HOT_CODE gbm_decode_frame(const u8 *data, u32 offset, u16 *dst, const u16 *ref) {
     u16 frame_len = read_u16_unaligned(data + offset);
     u16 bit_enc = read_u16_unaligned(data + offset + 2);
     u16 palette_bytes = read_u16_unaligned(data + offset + 4);

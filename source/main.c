@@ -27,6 +27,27 @@
 #include "gbs_audio.h"
 #include "gbm_decoder.h"
 
+// Game Pak wait states / ROM prefetch control (0x04000204). libgba does not
+// declare this register, so declare it here.
+//
+// The GBA resets WAITCNT to 0x0000: gamepak ROM uses the slowest timing
+// (4 cycles first access, 2 cycles second access) and the prefetch buffer is
+// DISABLED. In the image/dldi builds the .gbm is streamed from the FatFS
+// image in the ROM itself and in the ez/scsd/sclite/schis builds the video
+// window lives in cart PSRAM at 0x08400000, both in the WS0 region -- so
+// the reset value makes every media read and all ROM-resident code run at
+// the slowest cartridge timing the hardware supports.
+//
+// 0x4317 is the conventional value used by commercial GBA titles:
+//   bits 0-1 = 3  SRAM 8 cycles        bits 2-3 = 1  WS0 first access 3 cycles
+//   bit  4   = 1  WS0 second access 1  bit  14  = 1  ROM prefetch ENABLED
+//   bits 8-9 = 3  WS2 first access 8 cycles
+#ifndef GBM_WAITCNT_VALUE
+#define GBM_WAITCNT_VALUE 0x4317
+#endif
+#define REG_WAITCNT (*(volatile u16*)0x04000204)
+#define GBM_WAITCNT_APPLIED 1
+
 #include "draw.h"
 #include "images.h"
 
@@ -1042,6 +1063,9 @@ void menu(void) {
 
 // ─── Main entry point ───────────────────────────────────────────
 int main(void) {
+    // Set cartridge wait states + ROM prefetch before any ROM-bound work.
+    // GBM_WAITCNT_VALUE = 0 restores the (slow) hardware reset timing.
+    REG_WAITCNT = GBM_WAITCNT_VALUE; // GBM_WAITCNT_APPLIED
     irqInit();
     irqEnable(IRQ_VBLANK);
     irqSet(IRQ_VBLANK, vblank_handler);

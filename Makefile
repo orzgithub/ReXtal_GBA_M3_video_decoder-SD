@@ -36,7 +36,7 @@ MUSIC		:=
 #---------------------------------------------------------------------------------
 ARCH	:=	-mthumb -mthumb-interwork
 
-CFLAGS	:=	-g -Wall -Os -flto\
+CFLAGS	:=	-g -Wall -Os -flto -fno-strict-aliasing\
 		-mcpu=arm7tdmi -mtune=arm7tdmi\
 		$(ARCH)
 
